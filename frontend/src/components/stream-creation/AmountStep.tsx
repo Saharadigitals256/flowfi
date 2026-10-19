@@ -7,6 +7,7 @@ interface AmountStepProps {
   value: string;
   onChange: (value: string) => void;
   error?: string;
+  rateError?: string;
   token?: string;
   availableBalance?: string | null;
   isBalanceLoading?: boolean;
@@ -19,6 +20,7 @@ export const AmountStep: React.FC<AmountStepProps> = ({
   value,
   onChange,
   error,
+  rateError,
   token,
   availableBalance,
   isBalanceLoading = false,
@@ -135,6 +137,11 @@ export const AmountStep: React.FC<AmountStepProps> = ({
               />
             </svg>
             {error || "Amount exceeds wallet balance"}
+          </p>
+        )}
+        {rateError && (
+          <p className="mt-2 text-sm text-red-400" role="alert">
+            {rateError}
           </p>
         )}
         {!error && !isOverBalance && balanceError && (

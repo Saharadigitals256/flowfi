@@ -250,6 +250,7 @@ describe("useDashboard", () => {
       recentActivity: [],
       outgoingStreams: [],
       incomingStreams: [],
+      partialFailure: false,
     });
     // one request for outgoing ("sender") streams, one for incoming ("recipient")
     expect(fetch).toHaveBeenCalledTimes(2);

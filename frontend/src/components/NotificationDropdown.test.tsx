@@ -16,6 +16,10 @@ vi.mock('@/hooks/useStreamEvents', () => ({
     useStreamEvents: (...args: unknown[]) => useStreamEventsMock(...args),
 }));
 
+vi.mock('@/context/wallet-context', () => ({
+    useWallet: () => ({ authToken: null }),
+}));
+
 // Imported after the mock registrations above.
 import { NotificationDropdown } from './NotificationDropdown';
 
