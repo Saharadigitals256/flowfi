@@ -18,8 +18,7 @@ import Link from "next/link";
 import { ArrowLeft, FileText, X } from "lucide-react";
 import { useWallet } from "@/context/wallet-context";
 import { useStreamForm } from "@/hooks/useStreamForm";
-
-const TOKEN_DECIMALS = 7;
+import { getTokenDecimals, useTokenMetadata } from "@/hooks/useTokenMetadata";
 
 export default function CreateStreamContent() {
   const { status, session } = useWallet();
@@ -29,6 +28,7 @@ export default function CreateStreamContent() {
   const [loading, setLoading] = useState(false);
   const [txState, setTxState] = useState<"idle" | "signing" | "submitted" | "confirming">("idle");
   const [dismissedDraftBanner, setDismissedDraftBanner] = useState(false);
+  const { data: tokenMetadata = [] } = useTokenMetadata();
 
   // ── Shared form hook ────────────────────────────────────────────────────
   const {
@@ -45,6 +45,7 @@ export default function CreateStreamContent() {
     draftSavedAt,
   } = useStreamForm({
     walletPublicKey: session?.publicKey,
+    tokenMetadata,
     enableDraftPersistence: true,
     initialData: { token: "XLM", duration: "30" },
   });
@@ -82,7 +83,7 @@ export default function CreateStreamContent() {
     setTxState("signing");
 
     try {
-      const amountBigInt = toBaseUnits(formData.amount);
+      const amountBigInt = toBaseUnits(formData.amount, getTokenDecimals(formData.token, tokenMetadata));
       const durationBigInt = toDurationSeconds(formData.duration, "days");
       const tokenAddress = getTokenAddress(formData.token);
 
@@ -212,7 +213,7 @@ export default function CreateStreamContent() {
                 onChange={(e) => {
                   const newValue = e.target.value;
                   if (newValue === '' || /^\d*\.?\d*$/.test(newValue)) {
-                    if (hasValidPrecision(newValue, TOKEN_DECIMALS)) {
+                    if (hasValidPrecision(newValue, getTokenDecimals(formData.token, tokenMetadata))) {
                       updateFormData({ amount: newValue });
                     }
                   }

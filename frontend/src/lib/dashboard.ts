@@ -3,6 +3,7 @@ import type { BackendStream } from "./api-types";
 import { getStreamsEndpointCandidates, toTokenAmount } from "./api/_shared";
 import { TOKEN_ADDRESSES } from "./soroban";
 import { logger } from "./logger";
+import type { NetworkId } from "./stellar-config";
 
 export interface ActivityItem {
   id: string;
@@ -92,10 +93,12 @@ function mapStreamStatus(s: BackendStream): Stream["status"] {
 async function fetchStreams(
   publicKey: string,
   role: "sender" | "recipient",
+  networkId: NetworkId,
   signal?: AbortSignal
 ): Promise<BackendStream[]> {
   const endpoints = getStreamsEndpointCandidates();
   const params = new URLSearchParams({ [role]: publicKey });
+  params.set("network", networkId);
   let lastError: Error | null = null;
 
   for (const endpoint of endpoints) {
@@ -151,11 +154,15 @@ export function mapBackendStreamToFrontend(s: BackendStream, counterparty: strin
 /**
  * Fetches dashboard data for a given public key by querying both outgoing and incoming streams.
  */
-export async function fetchDashboardData(publicKey: string, signal?: AbortSignal): Promise<DashboardSnapshot> {
+export async function fetchDashboardData(
+  publicKey: string,
+  networkId: NetworkId = "testnet",
+  signal?: AbortSignal,
+): Promise<DashboardSnapshot> {
   try {
     const [outgoing, incoming] = await Promise.all([
-      fetchStreams(publicKey, "sender", signal),
-      fetchStreams(publicKey, "recipient", signal),
+      fetchStreams(publicKey, "sender", networkId, signal),
+      fetchStreams(publicKey, "recipient", networkId, signal),
     ]);
 
     const outgoingStreams = outgoing.map((stream) =>
@@ -332,14 +339,14 @@ export function getDashboardAnalytics(
   ];
 }
 
-export function dashboardQueryKey(publicKey: string) {
-  return ["dashboard", publicKey] as const;
+export function dashboardQueryKey(publicKey: string, networkId: NetworkId = "testnet") {
+  return ["dashboard", networkId, publicKey] as const;
 }
 
-export function useDashboard(publicKey: string) {
+export function useDashboard(publicKey: string, networkId: NetworkId = "testnet") {
   return useQuery({
-    queryKey: dashboardQueryKey(publicKey),
-    queryFn: ({ signal }) => fetchDashboardData(publicKey, signal),
+    queryKey: dashboardQueryKey(publicKey, networkId),
+    queryFn: ({ signal }) => fetchDashboardData(publicKey, networkId, signal),
     enabled: Boolean(publicKey),
   });
 }

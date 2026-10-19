@@ -17,6 +17,7 @@ import {
   type StreamFormData,
 } from "@/hooks/useStreamForm";
 import { validateAmount } from "@/lib/stream-validation";
+import { getTokenDecimals, useTokenMetadata } from "@/hooks/useTokenMetadata";
 
 // Re-export StreamFormData so existing imports keep working
 export type { StreamFormData };
@@ -45,6 +46,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   const [timeoutError, setTimeoutError] = useState(false);
 
   const router = useRouter();
+  const { data: tokenMetadata = [] } = useTokenMetadata();
 
   // ── Shared form hook (replaces ad-hoc validation + balance + templates) ──
   const {
@@ -62,6 +64,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     saveCustomTemplate,
   } = useStreamForm({
     walletPublicKey,
+    tokenMetadata,
     initialData: {
       token: "USDC",
       amount: "5000",
@@ -83,6 +86,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     formData.amount,
     walletBalance,
     formData.token,
+    getTokenDecimals(formData.token, tokenMetadata),
   );
   const amountValid = amountError === null;
   const canSubmit = !isSubmitting && amountValid;
@@ -233,6 +237,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
             onChange={(value) => updateFormData({ amount: value })}
             error={errors.amount}
             token={formData.token}
+            decimals={getTokenDecimals(formData.token, tokenMetadata)}
             availableBalance={walletBalance}
             isBalanceLoading={walletBalanceLoading}
             balanceError={walletBalanceError}
@@ -260,7 +265,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
       aria-labelledby="stream-creation-wizard-title"
       onClick={(e) => {
         // Close on backdrop click
-        if (e.target === e.currentTarget) {
+        if (e.target === e.currentTarget && !isSubmitting && !isPolling) {
           onClose();
         }
       }}
@@ -274,6 +279,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
           <button
             type="button"
             onClick={onClose}
+            disabled={isSubmitting || isPolling}
             className="text-slate-400 hover:text-foreground transition-colors"
             aria-label="Close"
           >
@@ -294,6 +300,11 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         </div>
 
         <Stepper steps={STEPS} currentStep={currentStep} />
+        <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          {isPolling
+            ? timeoutError ? "Confirmation timed out. You can retry or return to the dashboard." : "Transaction submitted. Waiting for network confirmation."
+            : `Step ${currentStep} of ${STEPS.length}: ${STEPS[currentStep - 1] ?? "Create stream"}`}
+        </p>
 
         <div className="my-8 min-h-[300px]">
           {isPolling ? (

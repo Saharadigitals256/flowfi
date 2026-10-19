@@ -16,11 +16,21 @@ vi.mock("next/navigation", () => ({
   useSearchParams: vi.fn(() => new URLSearchParams()),
 }));
 
+vi.mock("@/context/NetworkContext", () => ({
+  useNetwork: () => ({ network: { id: "testnet", name: "Testnet" }, networkId: "testnet" }),
+}));
+
+vi.mock("@/hooks/useTokenMetadata", () => ({
+  useTokenMetadata: () => ({ data: [] }),
+  getTokenDecimals: () => 7,
+}));
+
 vi.mock("@/hooks/useStreamEvents", () => ({
   useStreamEvents: () => ({
     events: [],
     connected: true,
     reconnecting: false,
+    offline: false,
     error: null,
   }),
 }));
@@ -206,7 +216,7 @@ describe("DashboardView + useDashboard cache integration", () => {
     const callsBeforeRetry = vi.mocked(fetch).mock.calls.length;
 
     vi.mocked(fetch).mockResolvedValue(jsonResponse([]));
-    screen.getByRole("button", { name: /retry/i }).click();
+    screen.getByRole("button", { name: /^retry$/i }).click();
 
     await waitFor(() =>
       expect(screen.getByText(/start your first stream/i)).toBeInTheDocument(),

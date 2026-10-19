@@ -3,11 +3,12 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   validateStreamForm,
-  getSpendableBalance,
+  getSpendableBalanceExact,
   type StreamFormData,
   type StreamFormErrors,
 } from "@/lib/stream-validation";
 import { fetchTokenBalanceDisplay } from "@/lib/soroban";
+import { getTokenDecimals, type TokenMetadata } from "@/hooks/useTokenMetadata";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,8 @@ export interface UseStreamFormOptions {
   enableDraftPersistence?: boolean;
   /** Draft storage key. Defaults to "flowfi.create-stream.draft.v1" */
   draftStorageKey?: string;
+  amountDecimals?: number;
+  tokenMetadata?: TokenMetadata[];
 }
 
 export interface UseStreamFormReturn {
@@ -256,12 +259,6 @@ function persistCustomTemplates(key: string, items: StreamTemplate[]): void {
  * precision. The value is floored (never rounded up) so the resulting "Max"
  * can never exceed the wallet's actual spendable balance.
  */
-function toSpendableAmountString(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "";
-  const floored = Math.floor(value * 1e7 + 1e-3) / 1e7;
-  return floored.toFixed(7).replace(/\.?0+$/, "");
-}
-
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useStreamForm(
@@ -273,6 +270,8 @@ export function useStreamForm(
     templateStorageKey = DEFAULT_TEMPLATE_STORAGE_KEY,
     enableDraftPersistence = false,
     draftStorageKey = DEFAULT_DRAFT_STORAGE_KEY,
+    amountDecimals = 7,
+    tokenMetadata = [],
   } = options;
 
   // ── Draft restoration ───────────────────────────────────────────────────
@@ -305,6 +304,9 @@ export function useStreamForm(
     }
     return base;
   });
+  const resolvedAmountDecimals = tokenMetadata.length > 0
+    ? getTokenDecimals(formData.token, tokenMetadata)
+    : amountDecimals;
 
   const [errors, setErrors] = useState<StreamFormErrors>({});
 
@@ -338,7 +340,7 @@ export function useStreamForm(
       }
     });
 
-    fetchTokenBalanceDisplay(walletPublicKey, formData.token)
+    fetchTokenBalanceDisplay(walletPublicKey, formData.token, resolvedAmountDecimals)
       .then((balance) => {
         if (cancelled) return;
         setWalletBalance(balance);
@@ -358,7 +360,7 @@ export function useStreamForm(
     return () => {
       cancelled = true;
     };
-  }, [walletPublicKey, formData.token]);
+  }, [walletPublicKey, formData.token, resolvedAmountDecimals]);
 
   // ── Draft persistence ───────────────────────────────────────────────────
   useEffect(() => {
@@ -424,28 +426,28 @@ export function useStreamForm(
       const newErrors = validateStreamForm(formData, {
         step,
         walletBalance,
+        amountDecimals: resolvedAmountDecimals,
       });
       setErrors(newErrors);
       return Object.keys(newErrors).length === 0;
     },
-    [formData, walletBalance],
+    [formData, walletBalance, resolvedAmountDecimals],
   );
 
   const validateAll = useCallback((): boolean => {
     const newErrors = validateStreamForm(formData, {
       walletBalance,
+      amountDecimals: resolvedAmountDecimals,
     });
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  }, [formData, walletBalance]);
+  }, [formData, walletBalance, resolvedAmountDecimals]);
 
   const setMaxAmount = useCallback(() => {
-    const spendable = getSpendableBalance(walletBalance, formData.token);
-    if (spendable === null) return;
-    const amount = toSpendableAmountString(spendable);
-    if (!amount) return;
+    const amount = getSpendableBalanceExact(walletBalance, formData.token, resolvedAmountDecimals);
+    if (amount === null || amount === "0") return;
     updateFormData({ amount });
-  }, [walletBalance, formData.token, updateFormData]);
+  }, [walletBalance, formData.token, resolvedAmountDecimals, updateFormData]);
 
   // ── Template helpers ────────────────────────────────────────────────────
 

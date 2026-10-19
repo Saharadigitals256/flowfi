@@ -18,6 +18,11 @@ vi.mock("@/lib/soroban", () => ({
   fetchTokenBalanceDisplay: vi.fn().mockResolvedValue("10000"),
 }));
 
+vi.mock("@/hooks/useTokenMetadata", () => ({
+  useTokenMetadata: () => ({ data: [] }),
+  getTokenDecimals: () => 7,
+}));
+
 vi.mock("@/utils/amount", () => {
   const hasValidPrecision = vi.fn((val: string, decimals: number) => {
     if (!val || val.trim() === "") return true;
@@ -42,7 +47,18 @@ vi.mock("@/utils/amount", () => {
     return null;
   });
 
-  return { hasValidPrecision, validateAmountInput };
+  const parseAmountExact = (input: string, decimals: number) => {
+    const [whole = "0", fraction = ""] = input.split(".");
+    return BigInt(whole || "0") * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, "0") || "0");
+  };
+  const formatAmount = (units: bigint, decimals: number) => {
+    const factor = 10n ** BigInt(decimals);
+    const whole = units / factor;
+    const fraction = (units % factor).toString().padStart(decimals, "0").replace(/0+$/, "");
+    return fraction ? `${whole}.${fraction}` : whole.toString();
+  };
+
+  return { hasValidPrecision, validateAmountInput, parseAmountExact, formatAmount };
 });
 
 vi.mock("@/hooks/useModalDialog", () => ({
@@ -711,7 +727,7 @@ describe("StreamCreationWizard", () => {
 
     clickNext(); // 4 -> 5 should be blocked by the balance check
 
-    expect(screen.getByText("Step 4 of 5")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/Step 4 of 5/);
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Amount exceeds wallet balance",
     );
@@ -728,7 +744,7 @@ describe("StreamCreationWizard", () => {
     renderWizard();
     // Balance is still loading, so step 4 cannot check it yet.
     advanceToStep5();
-    expect(screen.getByText("Step 5 of 5")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/Step 5 of 5/);
 
     await act(async () => {
       resolveBalance("100");

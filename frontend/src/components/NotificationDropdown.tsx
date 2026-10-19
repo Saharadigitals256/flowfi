@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
 import { formatAmount } from "@/utils/amount";
 import { Button } from "./ui/Button";
+import { useNetwork } from "@/context/NetworkContext";
 
 interface NotificationDropdownProps {
     publicKey: string;
@@ -21,14 +22,18 @@ interface NotificationItem {
 
 export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publicKey }) => {
     const router = useRouter();
+        const { networkId } = useNetwork();
     const [isOpen, setIsOpen] = useState(false);
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
     const containerRef = useRef<HTMLDivElement>(null);
+    const triggerRef = useRef<HTMLButtonElement>(null);
+    const closeButtonRef = useRef<HTMLButtonElement>(null);
 
     const { events: streamEvents, connected } = useStreamEvents({
         userPublicKeys: [publicKey],
-        autoReconnect: true,
+          autoReconnect: true,
+          networkId,
     });
 
     const formatEventMessage = useCallback((event: { type: string; data?: Record<string, unknown> }): string => {
@@ -122,6 +127,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
         const handleKeyDown = (event: KeyboardEvent) => {
             if (event.key === "Escape") {
                 setIsOpen(false);
+                triggerRef.current?.focus();
                 return;
             }
 
@@ -159,6 +165,10 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
         };
     }, [isOpen]);
 
+    useEffect(() => {
+        if (isOpen) closeButtonRef.current?.focus();
+    }, [isOpen]);
+
     const handleDropdownOpen = useCallback(() => {
         setIsOpen((prev) => !prev);
 
@@ -178,12 +188,12 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
     {unreadCount} new notifications
 </span>
             <button
+                ref={triggerRef}
                 onClick={handleDropdownOpen}
                 aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ""}`}
                 aria-expanded={isOpen}
                 aria-haspopup="dialog"
                 className="relative p-2 text-slate-400 hover:text-accent transition-colors"
-                disabled={!connected}
             >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -208,17 +218,21 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
             {isOpen && (
                 <div
                     role="dialog"
-                    aria-label="Notifications"
+                    aria-labelledby="notifications-heading"
                     className="absolute right-0 mt-2 w-80 bg-background/95 backdrop-blur-md border border-glass-border rounded-2xl shadow-2xl z-[100] overflow-hidden animate-in fade-in slide-in-from-top-2"
                 >
                     <div className="p-4 border-b border-glass-border flex justify-between items-center">
-                        <h3 className="font-bold text-white">Notifications</h3>
+                        <h3 id="notifications-heading" className="font-bold text-white">Notifications</h3>
 
                         <div className="flex items-center gap-2">
                             {!connected && <span className="text-xs text-red-400">Reconnecting...</span>}
 
                             <button
-                                onClick={() => setIsOpen(false)}
+                                ref={closeButtonRef}
+                                onClick={() => {
+                                    setIsOpen(false);
+                                    triggerRef.current?.focus();
+                                }}
                                 aria-label="Close notifications"
                                 className="text-slate-400 hover:text-white"
                             >

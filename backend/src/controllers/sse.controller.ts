@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { requestContext } from '../logger.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 import { z } from 'zod';
+import { getConfiguredStellarNetwork } from '../lib/stellar-network.js';
 
 const subscribeSchema = z.object({
   streams: z.array(z.string()).optional().default([]),
@@ -33,6 +34,13 @@ function getClientIp(req: Request): string {
   return req.ip || req.socket.remoteAddress || 'unknown';
 }
 export const subscribe = async (req: Request, res: Response) => {
+  if (req.query.network !== undefined && req.query.network !== getConfiguredStellarNetwork()) {
+    return res.status(409).json({
+      code: 'NETWORK_MISMATCH',
+      message: `This event stream serves ${getConfiguredStellarNetwork()}, not ${String(req.query.network)}.`,
+    });
+  }
+
   if (sseService.isShuttingDown()) {
     return res.status(503).json({ message: 'Server is shutting down, please reconnect shortly.' });
   }

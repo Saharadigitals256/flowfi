@@ -1,8 +1,10 @@
 "use client";
 
 import * as React from "react";
+import { useNetwork } from "@/context/NetworkContext";
 import type { DashboardSnapshot } from "@/lib/dashboard";
 import { fetchDashboardData, dashboardQueryKey } from "@/lib/dashboard";
+import { logger } from "@/lib/logger";
 import { EmptyState } from "./dashboard-view";
 import { ActivityIcon } from "./dashboard-view";
 import { Button } from "@/components/ui/Button";
@@ -104,15 +106,14 @@ export function DashboardOverview({
   setShowWizard,
   queryClient,
 }: DashboardOverviewProps) {
+  const { networkId } = useNetwork();
   React.useEffect(() => {
-    fetchDashboardData(session.publicKey)
+    fetchDashboardData(session.publicKey, networkId)
       .then((next: DashboardSnapshot) => {
-        queryClient.setQueryData(dashboardQueryKey(session.publicKey), next);
+        queryClient.setQueryData(dashboardQueryKey(session.publicKey, networkId), next);
       })
-      .catch((err) => {
-        queryClient.setQueryData(dashboardQueryKey(session.publicKey), null);
-      });
-  }, [session.publicKey, queryClient]);
+      .catch((err) => logger.warn("Dashboard overview refresh failed:", err));
+  }, [session.publicKey, networkId, queryClient]);
 
   return (
     <div className="dashboard-content-stack mt-8">

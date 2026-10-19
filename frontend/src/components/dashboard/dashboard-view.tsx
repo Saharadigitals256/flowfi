@@ -57,6 +57,8 @@ import { CancelConfirmModal } from "../stream-creation/CancelConfirmModal";
 import { StreamDetailsModal } from "./StreamDetailsModal";
 import { Button } from "../ui/Button";
 import { CashflowProjectionChart } from "./CashflowProjectionChart";
+import { useNetwork } from "@/context/NetworkContext";
+import { getTokenDecimals, useTokenMetadata } from "@/hooks/useTokenMetadata";
 
 // @ts-expect-error unused var
 const DashboardOverviewDynamic = dynamic(
@@ -517,6 +519,8 @@ const RecentActivityList = React.memo(function RecentActivityList({
 const VALID_TAB_IDS = new Set(SIDEBAR_ITEMS.map((item) => item.id));
 
 export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
+  const { network, networkId } = useNetwork();
+  const { data: tokenMetadata = [] } = useTokenMetadata();
   const queryClient = useQueryClient();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -530,8 +534,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     isLoading: isSnapshotLoading,
     isError: isSnapshotError,
     error: snapshotErrorObj,
+    dataUpdatedAt,
+    isFetching: isSnapshotFetching,
     refetch: refetchSnapshot,
-  } = useDashboard(session.publicKey);
+  } = useDashboard(session.publicKey, networkId);
 
   const snapshot: DashboardSnapshot | null = snapshotData ?? null;
   const snapshotError = isSnapshotError
@@ -669,11 +675,13 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     events: streamEvents,
     connected,
     reconnecting,
+    offline,
     error,
     retryNow,
   } = useStreamEvents({
     userPublicKeys: [session.publicKey],
-    autoReconnect: true,
+      autoReconnect: true,
+      networkId,
   });
 
   React.useEffect(() => {
@@ -691,12 +699,12 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         ];
         if (relevantTypes.includes(latestEvent.type)) {
           void queryClient.invalidateQueries({
-            queryKey: dashboardQueryKey(session.publicKey),
+            queryKey: dashboardQueryKey(session.publicKey, networkId),
           });
         }
       }
     }
-  }, [streamEvents, session.publicKey, queryClient]);
+  }, [streamEvents, session.publicKey, networkId, queryClient]);
 
   const [withdrawingIncomingStreamId, setWithdrawingIncomingStreamId] =
     React.useState<string | null>(null);
@@ -721,7 +729,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   // ── Optimistic helpers ─────────────────────────────────────────────────────
 
   const removeStreamLocally = (streamId: string) => {
-    queryClient.setQueryData<DashboardSnapshot | undefined>(dashboardQueryKey(session.publicKey), (prev) => {
+    queryClient.setQueryData<DashboardSnapshot | undefined>(dashboardQueryKey(session.publicKey, networkId), (prev) => {
       if (!prev) return prev;
       return {
         ...prev,
@@ -733,21 +741,6 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         activeStreamsCount: Math.max(0, prev.activeStreamsCount - 1),
       };
     });
-  };
-
-  const topUpStreamLocally = (streamId: string, amount: number) => {
-    queryClient.setQueryData<DashboardSnapshot | undefined>(
-      dashboardQueryKey(session.publicKey),
-      (prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          outgoingStreams: prev.outgoingStreams.map((s) =>
-            s.id === streamId ? { ...s, deposited: s.deposited + amount } : s,
-          ),
-        };
-      },
-    );
   };
 
   const addStreamLocally = (data: StreamFormData) => {
@@ -765,7 +758,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       isActive: true,
     };
     queryClient.setQueryData<DashboardSnapshot | undefined>(
-      dashboardQueryKey(session.publicKey),
+      dashboardQueryKey(session.publicKey, networkId),
       (prev) => {
         if (!prev) return prev;
         return {
@@ -785,7 +778,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       const result = await sorobanCreateStream(session, {
         recipient: data.recipient,
         tokenAddress: getTokenAddress(data.token),
-        amount: toBaseUnits(data.amount),
+        amount: toBaseUnits(data.amount, getTokenDecimals(data.token, tokenMetadata)),
         durationSeconds: toDurationSeconds(data.duration, data.durationUnit),
       });
       addStreamLocally(data);
@@ -798,14 +791,14 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     }
   };
 
-  const handleTopUpConfirm = async (streamId: string, amountStr: string) => {
+  const handleTopUpConfirm = async (streamId: string, amountStr: string, decimals: number) => {
     const toastId = toast.loading("Topping up stream…");
     try {
       await sorobanTopUp(session, {
         streamId: BigInt(streamId.replace(/\D/g, "") || "0"),
-        amount: toBaseUnits(amountStr),
+        amount: toBaseUnits(amountStr, decimals),
       });
-      topUpStreamLocally(streamId, parseFloat(amountStr));
+      await refetchSnapshot();
       setModal(null);
       transactionSuccessToast("Stream topped up successfully!", { id: toastId });
     } catch (err) {
@@ -856,7 +849,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     }
 
     // ── Error state ───────────────────────────────────────────────────────
-    if (snapshotError) {
+    if (snapshotError && !snapshot) {
       return (
         <ErrorState
           message={snapshotError}
@@ -1026,6 +1019,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
             <SSEStatusIndicator
               connected={connected}
               reconnecting={reconnecting}
+              offline={offline}
               error={error}
               onRetry={retryNow}
             />
@@ -1047,6 +1041,21 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
             </div>
           </div>
         </header>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 px-6 pt-4 text-xs text-slate-400" role="status" aria-live="polite">
+          <span>
+            {snapshotError
+              ? `Showing cached indexer data for ${network.name}; refresh failed.`
+              : isSnapshotFetching
+                ? `Refreshing ${network.name} indexer data…`
+                : `Indexer snapshot for ${network.name}${dataUpdatedAt ? ` · updated ${new Date(dataUpdatedAt).toLocaleTimeString()}` : " · waiting for first sync"}`}
+          </span>
+          {(snapshotError || isSnapshotFetching) && (
+            <button type="button" className="underline underline-offset-2" onClick={() => void refetchSnapshot()}>
+              {isSnapshotFetching ? "Refresh" : "Retry refresh"}
+            </button>
+          )}
+        </div>
 
         {renderContent()}
 

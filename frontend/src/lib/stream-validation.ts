@@ -10,7 +10,12 @@
  * This module closes those gaps.
  */
 
-import { hasValidPrecision, validateAmountInput } from "@/utils/amount";
+import {
+  formatAmount,
+  hasValidPrecision,
+  parseAmountExact,
+  validateAmountInput,
+} from "@/utils/amount";
 import { isValidStellarPublicKey } from "@/lib/stellar";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -57,15 +62,27 @@ export function getSpendableBalance(
   walletBalance: string | null | undefined,
   token?: string | null,
 ): number | null {
+  const exactBalance = getSpendableBalanceExact(walletBalance, token);
+  return exactBalance === null ? null : Number(exactBalance);
+}
+
+export function getSpendableBalanceExact(
+  walletBalance: string | null | undefined,
+  token?: string | null,
+  decimals = 7,
+): string | null {
   if (walletBalance === null || walletBalance === undefined || walletBalance === "") {
     return null;
   }
-  const parsed = parseFloat(walletBalance);
-  if (isNaN(parsed)) return null;
-  if ((token ?? "").toUpperCase() === "XLM") {
-    return Math.max(parsed - XLM_BASE_RESERVE, 0);
+  try {
+    let units = parseAmountExact(walletBalance, decimals);
+    if ((token ?? "").toUpperCase() === "XLM") {
+      units -= parseAmountExact(String(XLM_BASE_RESERVE), decimals);
+    }
+    return formatAmount(units > 0n ? units : 0n, decimals);
+  } catch {
+    return null;
   }
-  return parsed;
 }
 
 export type StreamFormErrors = Partial<Record<keyof StreamFormData, string>>;
@@ -84,6 +101,7 @@ export interface ValidationOptions {
   step?: number;
   /** Display-formatted wallet balance for the selected token (e.g. "1000.5") */
   walletBalance?: string | null;
+  amountDecimals?: number;
 }
 
 // ─── Individual field validators ──────────────────────────────────────────────
@@ -112,33 +130,43 @@ export function validateAmount(
   amount: string,
   walletBalance?: string | null,
   token?: string | null,
+  decimals = 7,
 ): string | null {
   const trimmed = amount.trim();
   if (!trimmed) {
     return "Amount is required";
   }
 
-  const parsed = parseFloat(trimmed);
-  if (isNaN(parsed) || parsed <= 0) {
-    return "Amount must be a positive number";
-  }
-
-  if (!hasValidPrecision(trimmed, 7)) {
-    return "Amount exceeds maximum precision (7 decimal places)";
+  if (!hasValidPrecision(trimmed, decimals)) {
+    return `Amount exceeds maximum precision (${decimals} decimal places)`;
   }
 
   // Use the richer validateAmountInput for extra safety
-  const deepCheck = validateAmountInput(trimmed, 7);
+  const deepCheck = validateAmountInput(trimmed, decimals);
   if (deepCheck) {
     return deepCheck;
   }
 
+  let amountUnits: bigint;
+  try {
+    amountUnits = parseAmountExact(trimmed, decimals);
+  } catch {
+    return "Please enter a valid number";
+  }
+  if (amountUnits <= 0n) return "Amount must be a positive number";
+
   // Wallet balance check — applied uniformly across all entry points.
   // XLM reserves are subtracted so users cannot deposit funds that are
   // locked as the account's minimum balance.
-  const available = getSpendableBalance(walletBalance, token);
-  if (available !== null && parsed > available) {
-    return "Amount exceeds wallet balance";
+  const available = getSpendableBalanceExact(walletBalance, token, decimals);
+  if (available !== null) {
+    try {
+      if (amountUnits > parseAmountExact(available, decimals)) {
+        return "Amount exceeds wallet balance";
+      }
+    } catch {
+      return "Unable to validate wallet balance";
+    }
   }
 
   return null;
@@ -170,7 +198,7 @@ export function validateStreamForm(
   data: StreamFormData,
   options: ValidationOptions = {},
 ): StreamFormErrors {
-  const { step, walletBalance } = options;
+  const { step, walletBalance, amountDecimals = 7 } = options;
   const errors: StreamFormErrors = {};
 
   const shouldValidate = (
@@ -192,7 +220,7 @@ export function validateStreamForm(
 
   // Step 4 = Amount
   if (shouldValidate(4)) {
-    const amountError = validateAmount(data.amount, walletBalance, data.token);
+    const amountError = validateAmount(data.amount, walletBalance, data.token, amountDecimals);
     if (amountError) errors.amount = amountError;
   }
 

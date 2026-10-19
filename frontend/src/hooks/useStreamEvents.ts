@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import type { NetworkId } from '@/lib/stellar-config';
 
 interface StreamEvent {
   type: 'created' | 'topped_up' | 'withdrawn' | 'cancelled' | 'completed' | 'paused' | 'resumed';
@@ -13,6 +14,7 @@ interface UseStreamEventsOptions {
   autoReconnect?: boolean;
   maxRetryDelay?: number;
   jwtToken?: string;
+  networkId?: NetworkId;
 }
 
 interface UseStreamEventsReturn {
@@ -20,6 +22,7 @@ interface UseStreamEventsReturn {
   connected: boolean;
   error: Error | null;
   reconnecting: boolean;
+  offline: boolean;
   clearEvents: () => void;
   /** Force an immediate reconnect attempt, bypassing the current backoff. */
   retryNow: () => void;
@@ -36,23 +39,28 @@ export function useStreamEvents(
     autoReconnect = true,
     maxRetryDelay = 30000,
     jwtToken,
+    networkId = 'testnet',
   } = options;
 
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
+  const [offline, setOffline] = useState(
+    () => typeof navigator !== "undefined" && !navigator.onLine,
+  );
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const retryDelayRef = useRef(1000);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
+  const onlineRef = useRef(!offline);
   const connectRef = useRef<() => void>(() => undefined);
 
   const subscriptionKey = useMemo(() => {
     const streams = [...rawStreamIds].sort().join(',');
-    return `${subscribeToAll ? 'all' : streams}|${jwtToken || ''}`;
-  }, [rawStreamIds, subscribeToAll, jwtToken]);
+    return `${subscribeToAll ? 'all' : streams}|${jwtToken || ''}|${networkId}`;
+  }, [rawStreamIds, subscribeToAll, jwtToken, networkId]);
 
   const buildUrl = useCallback(() => {
     const params = new URLSearchParams();
@@ -66,12 +74,13 @@ export function useStreamEvents(
     if (jwtToken) {
       params.append('token', jwtToken);
     }
+    params.append('network', networkId);
 
     const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
     return `${baseUrl}/v1/events/subscribe?${params}`;
     // subscriptionKey captures all subscription parameters as a stable string
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subscriptionKey]);
+  }, [subscriptionKey, networkId]);
   /**
    * Force an immediate reconnect (issue #1508).
    *
@@ -102,6 +111,14 @@ export function useStreamEvents(
     }
 
     const url = buildUrl();
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      onlineRef.current = false;
+      setOffline(true);
+      setConnected(false);
+      setReconnecting(false);
+      return;
+    }
+    onlineRef.current = true;
     const eventSource = new EventSource(url);
     eventSourceRef.current = eventSource;
 
@@ -139,12 +156,14 @@ export function useStreamEvents(
       eventSource.close();
 
       if (autoReconnect) {
-        setReconnecting(true);
+        setReconnecting(onlineRef.current);
 
         if (reconnectTimeoutRef.current !== null) {
           clearTimeout(reconnectTimeoutRef.current);
           reconnectTimeoutRef.current = null;
         }
+
+        if (!onlineRef.current) return;
 
         reconnectAttemptsRef.current += 1;
 
@@ -157,6 +176,8 @@ export function useStreamEvents(
           reconnectTimeoutRef.current = setTimeout(() => {
             connectRef.current();
           }, delay);
+        } else {
+          setReconnecting(false);
         }
       }
     };
@@ -169,7 +190,31 @@ export function useStreamEvents(
   useEffect(() => {
     connect();
 
+    const handleOffline = () => {
+      onlineRef.current = false;
+      setOffline(true);
+      setConnected(false);
+      setReconnecting(false);
+      if (reconnectTimeoutRef.current !== null) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      eventSourceRef.current?.close();
+    };
+    const handleOnline = () => {
+      onlineRef.current = true;
+      setOffline(false);
+      retryDelayRef.current = 1000;
+      reconnectAttemptsRef.current = 0;
+      connectRef.current();
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+
     return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
@@ -186,6 +231,7 @@ export function useStreamEvents(
     connected,
     error,
     reconnecting,
+    offline,
     clearEvents,
     retryNow,
   };
